@@ -18,7 +18,7 @@ SUPABASE_KEY = "sb_secret_LbtjYgX3-YPg1Idfj0HGcQ_Fv8kx503"
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # ==========================================
-# 2. INICIALIZACIÓN DE FASTAPI Y CORS
+# 2. INICIALIZACIÓN DE FASTAPI Y CORS.
 # ==========================================
 app = FastAPI()
 
