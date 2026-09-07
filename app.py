@@ -4,7 +4,7 @@ import requests
 from urllib.parse import quote_plus
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.cors import CORSMiddleware  # <-- IMPORTANTE
 from pydantic import BaseModel
 from supabase import create_client, Client
 
@@ -17,20 +17,36 @@ SUPABASE_KEY = "sb_secret_LbtjYgX3-YPg1Idfj0HGcQ_Fv8kx503"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# --- AQUÍ VA LA CONFIGURACIÓN DE CORS ---
+# ==========================================
+# 2. INICIALIZACIÓN DE FASTAPI Y CORS
+# ==========================================
 app = FastAPI()
 
+# Lista explícita de dominios permitidos
+origins = [
+    "https://micomparador.netlify.app",  # Reemplaza con la URL real de tu Netlify si es distinta
+    "http://localhost:3000",
+    "http://127.0.0.1:5500",
+    "*"
+]
+
+# Middleware para autorizar las peticiones entre Netlify y Render
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permite peticiones desde Netlify y cualquier origen
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
     allow_headers=["*"],
+    expose_headers=["*"]
 )
-# -----------------------------------------
 
+# ==========================================
+# 3. MODELOS Y RUTAS DE LA API
+# ==========================================
 class SolicitudProducto(BaseModel):
     url_amazon: str
+
+# (A partir de aquí continúa el resto de tu código: funciones de scraping, endpoints, etc.)
 
 # ==========================================
 # 2. FUNCIONES DE BÚSQUEDA Y EXTRACCIÓN
