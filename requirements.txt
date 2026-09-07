@@ -2,7 +2,6 @@ fastapi
 uvicorn
 requests
 beautifulsoup4
-supabase==2.3.0
-postgrest==0.16.2
-pydantic
+supabase>=2.4.0
+pydantic>=2.0
 httpx
