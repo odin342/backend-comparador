@@ -112,6 +112,26 @@ def extraer_de_amazon(url_amazon: str):
     titulo_elem = soup.find(id="productTitle")
     nombre = titulo_elem.get_text().strip() if titulo_elem else "Producto Amazon"
 
+    # --- 1. NUEVO: Extraer Imagen del Producto ---
+    imagen_url = ""
+    img_elem = soup.find(id="landingImage") or soup.find(id="imgBlkFront")
+    if img_elem:
+        if img_elem.has_attr('data-old-hires') and img_elem['data-old-hires']:
+            imagen_url = img_elem['data-old-hires']
+        elif img_elem.has_attr('src'):
+            imagen_url = img_elem['src']
+            
+    if not imagen_url:
+        # Fallback si Amazon usa formato JSON en imágenes
+        img_dynamic = soup.find("img", {"id": "landingImage"})
+        if img_dynamic and img_dynamic.has_attr("data-a-dynamic-image"):
+            try:
+                imgs_dict = json.loads(img_dynamic["data-a-dynamic-image"])
+                imagen_url = list(imgs_dict.keys())[0] # Toma la de mejor resolución
+            except Exception:
+                pass
+
+    # Precio
     precio = 0.0
     precio_elem = soup.find("span", class_="a-offscreen") or soup.find(id="priceblock_ourprice")
     if precio_elem:
@@ -120,11 +140,13 @@ def extraer_de_amazon(url_amazon: str):
         if match:
             precio = float(match.group())
 
+    # Calificación
     calificacion = "⭐ N/A"
     patron_rating = re.search(r'(\d[\.,]\d)\s*(out of 5 stars|de 5 estrellas|de 5)', response.text, re.IGNORECASE)
     if patron_rating:
         calificacion = f"⭐ {patron_rating.group(1).replace(',', '.')} / 5"
 
+    # Especificaciones
     especificaciones = {}
     tabla_specs = soup.find("table", class_="a-keyvalue") or soup.find(id="productDetails_techSpec_section_1")
     if tabla_specs:
@@ -132,6 +154,30 @@ def extraer_de_amazon(url_amazon: str):
             k, v = fila.find("th"), fila.find("td")
             if k and v:
                 especificaciones[k.get_text().strip()] = v.get_text().strip().replace('\u200e', '')
+
+    if not especificaciones:
+        for fila in soup.find_all("tr", class_="po-row"):
+            k = fila.find("td", class_="a-span3") or fila.find("span", class_="a-size-base a-color-base")
+            v = fila.find("td", class_="a-span9") or fila.find("span", class_="a-size-base a-color-tertiary")
+            if k and v:
+                especificaciones[k.get_text().strip()] = v.get_text().strip().replace('\u200e', '')
+
+    # --- 2. NUEVO: Extraer / Buscar Año de Lanzamiento ---
+    anio_lanzamiento = "Desconocido"
+    # Buscar claves típicas en Amazon: "Date First Available", "Fecha de primera disponibilidad", "Model Year", "Año"
+    for clave, valor in especificaciones.items():
+        clave_lower = clave.lower()
+        if any(term in clave_lower for term in ["date first available", "model year", "fecha de disponibilidad", "año"]):
+            match_anio = re.search(r'20\d{2}|19\d{2}', valor)
+            if match_anio:
+                anio_lanzamiento = match_anio.group(0)
+                break
+
+    # Si no se encontró en la tabla, buscar un año de 4 dígitos en el título del producto
+    if anio_lanzamiento == "Desconocido":
+        match_titulo = re.search(r'\b(201[5-9]|202[0-6])\b', nombre)
+        if match_titulo:
+            anio_lanzamiento = match_titulo.group(0)
 
     slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
 
@@ -141,6 +187,8 @@ def extraer_de_amazon(url_amazon: str):
         "precio": precio,
         "calificacion": calificacion,
         "categoria_id": detectar_categoria_id(nombre, soup),
+        "imagen_url": imagen_url,
+        "anio_lanzamiento": anio_lanzamiento,
         "especificaciones": especificaciones
     }
 
