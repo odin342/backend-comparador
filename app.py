@@ -112,7 +112,7 @@ def extraer_de_amazon(url_amazon: str):
     titulo_elem = soup.find(id="productTitle")
     nombre = titulo_elem.get_text().strip() if titulo_elem else "Producto Amazon"
 
-    # --- 1. NUEVO: Extraer Imagen del Producto ---
+    # Imagen
     imagen_url = ""
     img_elem = soup.find(id="landingImage") or soup.find(id="imgBlkFront")
     if img_elem:
@@ -122,12 +122,11 @@ def extraer_de_amazon(url_amazon: str):
             imagen_url = img_elem['src']
             
     if not imagen_url:
-        # Fallback si Amazon usa formato JSON en imágenes
         img_dynamic = soup.find("img", {"id": "landingImage"})
         if img_dynamic and img_dynamic.has_attr("data-a-dynamic-image"):
             try:
                 imgs_dict = json.loads(img_dynamic["data-a-dynamic-image"])
-                imagen_url = list(imgs_dict.keys())[0] # Toma la de mejor resolución
+                imagen_url = list(imgs_dict.keys())[0]
             except Exception:
                 pass
 
@@ -148,12 +147,18 @@ def extraer_de_amazon(url_amazon: str):
 
     # Especificaciones
     especificaciones = {}
-    tabla_specs = soup.find("table", class_="a-keyvalue") or soup.find(id="productDetails_techSpec_section_1")
-    if tabla_specs:
-        for fila in tabla_specs.find_all("tr"):
-            k, v = fila.find("th"), fila.find("td")
-            if k and v:
-                especificaciones[k.get_text().strip()] = v.get_text().strip().replace('\u200e', '')
+    
+    # Extraer especificaciones de tablas y listas de detalles de Amazon
+    for selector in ["table.a-keyvalue", "#productDetails_techSpec_section_1", "#detailBullets_feature_div"]:
+        elementos = soup.select(f"{selector} tr, {selector} li")
+        for elem in elementos:
+            texto = elem.get_text()
+            if ":" in texto:
+                partes = texto.split(":", 1)
+                k = partes[0].strip().replace('\n', '').replace('\u200e', '')
+                v = partes[1].strip().replace('\n', '').replace('\u200e', '')
+                if k and v and len(k) < 50:
+                    especificaciones[k] = v
 
     if not especificaciones:
         for fila in soup.find_all("tr", class_="po-row"):
@@ -162,22 +167,25 @@ def extraer_de_amazon(url_amazon: str):
             if k and v:
                 especificaciones[k.get_text().strip()] = v.get_text().strip().replace('\u200e', '')
 
-    # --- 2. NUEVO: Extraer / Buscar Año de Lanzamiento ---
+    # Extraer Año de Lanzamiento
     anio_lanzamiento = "Desconocido"
-    # Buscar claves típicas en Amazon: "Date First Available", "Fecha de primera disponibilidad", "Model Year", "Año"
+    # Buscar en la página completa o especificaciones términos clave de fecha
     for clave, valor in especificaciones.items():
         clave_lower = clave.lower()
-        if any(term in clave_lower for term in ["date first available", "model year", "fecha de disponibilidad", "año"]):
-            match_anio = re.search(r'20\d{2}|19\d{2}', valor)
+        if any(term in clave_lower for term in ["date first available", "model year", "fecha de disponibilidad", "año del modelo", "lanzamiento"]):
+            match_anio = re.search(r'\b(201[5-9]|202[0-6])\b', valor)
             if match_anio:
                 anio_lanzamiento = match_anio.group(0)
                 break
 
-    # Si no se encontró en la tabla, buscar un año de 4 dígitos en el título del producto
     if anio_lanzamiento == "Desconocido":
-        match_titulo = re.search(r'\b(201[5-9]|202[0-6])\b', nombre)
-        if match_titulo:
-            anio_lanzamiento = match_titulo.group(0)
+        match_general = re.search(r'(?:Date First Available|Fecha de primera disponibilidad)[^\d]+(201[5-9]|202[0-6])', response.text, re.IGNORECASE)
+        if match_general:
+            anio_lanzamiento = match_general.group(1)
+        else:
+            match_titulo = re.search(r'\b(201[5-9]|202[0-6])\b', nombre)
+            if match_titulo:
+                anio_lanzamiento = match_titulo.group(0)
 
     slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
 
@@ -197,12 +205,18 @@ def extraer_de_amazon(url_amazon: str):
 # ==========================================
 
 @app.get("/api/sugerencias")
-async def obtener_sugerencias(q: str = ""):
+async def obtener_sugerencias(q: str = "", categoria_id: int = 0):
     texto = q.strip()
     if not texto or len(texto) < 2:
         return []
     try:
-        res = supabase.table('productos').select('nombre').ilike('nombre', f"%{texto}%").limit(5).execute()
+        query = supabase.table('productos').select('nombre').ilike('nombre', f"%{texto}%")
+        
+        # Si el usuario seleccionó una categoría específica (diferente de 0), filtramos por ella
+        if categoria_id > 0:
+            query = query.eq('categoria_id', categoria_id)
+            
+        res = query.limit(5).execute()
         if res.data:
             return list(set([item['nombre'] for item in res.data]))
     except Exception:
