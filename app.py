@@ -12,9 +12,9 @@ from supabase import create_client, Client
 # ==========================================
 # 1. CONFIGURACIÓN Y CREDENCIALES
 # ==========================================
-SCRAPERAPI_KEY = "ffed8880e2e45f1789bd6e0379c65b0b"
-SUPABASE_URL = "https://jqvodxitphzyuizfhkyj.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impxdm9keGl0cGh6eXVpemZoa3lqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4ODQzOTM4MCwiZXhwIjoyMTA0MDE1MzgwfQ.zV-wfwvVP-6mHONEs7K1tW6c8CbZG6jW-nvy5HZPpjM"
+SCRAPERAPI_KEY = "TU_SCRAPERAPI_KEY_REAL"
+SUPABASE_URL = "https://TU-PROYECTO-REAL.supabase.co"
+SUPABASE_KEY = "TU_SERVICE_ROLE_KEY_REAL"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -161,30 +161,6 @@ def extraer_de_amazon(url_amazon: str):
                 if k and v and len(k) < 60:
                     especificaciones[k] = v
 
-    # --- EXTRAER AÑO DE LANZAMIENTO (Búsqueda por patrones avanzados) ---
-    anio_lanzamiento = "Desconocido"
-
-    # A. Buscar en el diccionario de especificaciones recopilado
-    for k, v in especificaciones.items():
-        k_lower = k.lower()
-        if any(term in k_lower for term in ["date first available", "model year", "fecha de disponibilidad", "primera disponibilidad", "año", "release"]):
-            match = re.search(r'\b(201[0-9]|202[0-6])\b', v)
-            if match:
-                anio_lanzamiento = match.group(0)
-                break
-
-    # B. Buscar en el texto HTML global de Amazon
-    if anio_lanzamiento == "Desconocido":
-        patron_fecha = re.search(r'(?:Date First Available|Fecha de primera disponibilidad|Model Year)[^\d]{1,50}(?:[A-Za-z]+|\d{1,2})[,\s\.\-]+(?:[A-Za-z]+|\d{1,2})[,\s\.\-]+(201[0-9]|202[0-6])', html_text, re.IGNORECASE)
-        if patron_fecha:
-            anio_lanzamiento = patron_fecha.group(1)
-
-    # C. Buscar cualquier año de 4 dígitos (2010 a 2026) en el título del producto como último recurso
-    if anio_lanzamiento == "Desconocido":
-        match_titulo = re.search(r'\b(201[0-9]|202[0-6])\b', nombre)
-        if match_titulo:
-            anio_lanzamiento = match_titulo.group(0)
-
     slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
 
     return {
@@ -194,7 +170,6 @@ def extraer_de_amazon(url_amazon: str):
         "calificacion": calificacion,
         "categoria_id": detectar_categoria_id(nombre),
         "imagen_url": imagen_url,
-        "anio_lanzamiento": anio_lanzamiento,
         "especificaciones": especificaciones
     }
 
@@ -235,21 +210,16 @@ async def obtener_producto(req: SolicitudProducto):
                 q_supa = q_supa.eq('categoria_id', cat_filtro)
             res = q_supa.limit(1).execute()
 
-            # Si el producto está en Supabase Y tiene el año cargado, lo usa
-            if res.data and len(res.data) > 0 and res.data[0].get("anio_lanzamiento") and res.data[0].get("anio_lanzamiento") != "Desconocido":
+            if res.data and len(res.data) > 0:
                 producto_datos = res.data[0]
             else:
-                # Si no está o no tiene año, lo busca de nuevo en Amazon
                 url_encontrada = buscar_url_en_amazon(entrada)
                 if url_encontrada:
                     producto_datos = extraer_de_amazon(url_encontrada)
-                elif res.data and len(res.data) > 0:
-                    producto_datos = res.data[0]
 
         if not producto_datos:
             raise HTTPException(status_code=404, detail=f"No se encontró información para '{entrada}'.")
 
-        # Validación estricta de categoría
         if cat_filtro > 0 and producto_datos.get("categoria_id") != cat_filtro:
             nombre_cat_esperada = NOMBRES_CATEGORIAS.get(cat_filtro, "seleccionada")
             nombre_cat_detectada = NOMBRES_CATEGORIAS.get(producto_datos.get("categoria_id"), "otra categoría")
