@@ -185,7 +185,7 @@ def extraer_de_amazon(url_amazon: str):
         if match_titulo:
             anio_lanzamiento = match_titulo.group(0)
 
-    # slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
+    slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
 
     return {
         "nombre": nombre[:100],
