@@ -166,7 +166,12 @@ async def obtener_producto(req: SolicitudProducto):
     entrada = req.url_amazon.strip()
 
     try:
-        # A. Si se ingresa una URL directa de Amazon
+        # 1. Buscar primero en Supabase
+        res = supabase.table('productos').select('*').ilike('nombre', f"%{entrada}%").limit(1).execute()
+        if res.data and len(res.data) > 0:
+            return res.data[0]
+
+        # 2. Si no está en Supabase y es una URL de Amazon, extraer
         if "amazon." in entrada:
             producto_datos = extraer_de_amazon(entrada)
             if not producto_datos:
@@ -174,12 +179,7 @@ async def obtener_producto(req: SolicitudProducto):
             supabase.table('productos').upsert(producto_datos, on_conflict='slug').execute()
             return producto_datos
 
-        # B. Consulta en Supabase
-        res = supabase.table('productos').select('*').ilike('nombre', f"%{entrada}%").limit(1).execute()
-        if res.data and len(res.data) > 0:
-            return res.data[0]
-
-        # C. Búsqueda automática en Amazon si no existe en la base de datos
+        # 3. Intentar búsqueda automática en Amazon
         url_encontrada = buscar_url_en_amazon(entrada)
         if url_encontrada:
             producto_datos = extraer_de_amazon(url_encontrada)
