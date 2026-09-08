@@ -12,10 +12,9 @@ from supabase import create_client, Client
 # ==========================================
 # 1. CONFIGURACIÓN Y CREDENCIALES
 # ==========================================
-# REEMPLAZA ESTOS VALORES CON TUS CREDENCIALES REALES
-SCRAPERAPI_KEY = "ffed8880e2e45f1789bd6e0379c65b0b"
-SUPABASE_URL = "https://jqvodxitphzyuizfhkyj.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impxdm9keGl0cGh6eXVpemZoa3lqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4ODQzOTM4MCwiZXhwIjoyMTA0MDE1MzgwfQ.zV-wfwvVP-6mHONEs7K1tW6c8CbZG6jW-nvy5HZPpjM"
+SCRAPERAPI_KEY = "TU_SCRAPERAPI_KEY_REAL"
+SUPABASE_URL = "https://TU-PROYECTO-REAL.supabase.co"
+SUPABASE_KEY = "TU_SERVICE_ROLE_O_ANON_KEY_REAL"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -32,7 +31,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Captura de errores globales para garantizar cabeceras CORS en respuestas de error
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
@@ -42,6 +40,14 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 class SolicitudProducto(BaseModel):
     url_amazon: str
+    categoria_id: int = 0  # 0 significa 'Todas las categorías'
+
+# Nombres legibles de categorías
+NOMBRES_CATEGORIAS = {
+    1: "Celulares", 2: "Mouses", 3: "Teclados", 4: "Televisores",
+    5: "Portátiles", 6: "Diademas", 7: "Board", 8: "Ram",
+    9: "Tarjeta De Video", 10: "Monitores", 11: "Disco Duro", 12: "Tablet"
+}
 
 # ==========================================
 # 3. FUNCIONES DE BÚSQUEDA Y EXTRACCIÓN
@@ -108,11 +114,14 @@ def extraer_de_amazon(url_amazon: str):
     if response.status_code != 200:
         return None
 
-    soup = BeautifulSoup(response.text, 'html.parser')
+    html_text = response.text
+    soup = BeautifulSoup(html_text, 'html.parser')
+
+    # Nombre
     titulo_elem = soup.find(id="productTitle")
     nombre = titulo_elem.get_text().strip() if titulo_elem else "Producto Amazon"
 
-    # Imagen
+    # Imagen URL
     imagen_url = ""
     img_elem = soup.find(id="landingImage") or soup.find(id="imgBlkFront")
     if img_elem:
@@ -141,60 +150,65 @@ def extraer_de_amazon(url_amazon: str):
 
     # Calificación
     calificacion = "⭐ N/A"
-    patron_rating = re.search(r'(\d[\.,]\d)\s*(out of 5 stars|de 5 estrellas|de 5)', response.text, re.IGNORECASE)
+    patron_rating = re.search(r'(\d[\.,]\d)\s*(out of 5 stars|de 5 estrellas|de 5)', html_text, re.IGNORECASE)
     if patron_rating:
         calificacion = f"⭐ {patron_rating.group(1).replace(',', '.')} / 5"
 
-    # Especificaciones
+    # ESPECIFICACIONES TÉCNICAS (Búsqueda exhaustiva)
     especificaciones = {}
-    
-    # Extraer especificaciones de tablas y listas de detalles de Amazon
-    for selector in ["table.a-keyvalue", "#productDetails_techSpec_section_1", "#detailBullets_feature_div"]:
-        elementos = soup.select(f"{selector} tr, {selector} li")
-        for elem in elementos:
-            texto = elem.get_text()
+
+    # 1. Tablas de características técnicas
+    for tr in soup.select("table.a-keyvalue tr, #productDetails_techSpec_section_1 tr, #technicalSpecifications_section_1 tr, .po-row"):
+        th = tr.find(["th", "td"], class_=re.compile(r"a-span3|prodDetSectionEntry")) or tr.find("th")
+        td = tr.find("td", class_=re.compile(r"a-span9|prodDetAttrValue")) or tr.find_all("td")[-1] if tr.find_all("td") else None
+        if th and td:
+            k = th.get_text().strip().replace('\u200e', '').replace('\n', '')
+            v = td.get_text().strip().replace('\u200e', '').replace('\n', '')
+            if k and v and len(k) < 60:
+                especificaciones[k] = v
+
+    # 2. Listas de viñetas de detalles (#detailBullets_feature_div)
+    for li in soup.select("#detailBullets_feature_div li, #productDetails_db_sections li"):
+        spans = li.find_all("span", class_="a-list-item")
+        if spans:
+            texto = spans[0].get_text()
             if ":" in texto:
                 partes = texto.split(":", 1)
-                k = partes[0].strip().replace('\n', '').replace('\u200e', '')
-                v = partes[1].strip().replace('\n', '').replace('\u200e', '')
-                if k and v and len(k) < 50:
+                k = re.sub(r'\s+', ' ', partes[0]).strip().replace('\u200e', '')
+                v = re.sub(r'\s+', ' ', partes[1]).strip().replace('\u200e', '')
+                if k and v and len(k) < 60:
                     especificaciones[k] = v
 
-    if not especificaciones:
-        for fila in soup.find_all("tr", class_="po-row"):
-            k = fila.find("td", class_="a-span3") or fila.find("span", class_="a-size-base a-color-base")
-            v = fila.find("td", class_="a-span9") or fila.find("span", class_="a-size-base a-color-tertiary")
-            if k and v:
-                especificaciones[k.get_text().strip()] = v.get_text().strip().replace('\u200e', '')
-
-    # Extraer Año de Lanzamiento
+    # EXTRAER AÑO DE LANZAMIENTO
     anio_lanzamiento = "Desconocido"
-    # Buscar en la página completa o especificaciones términos clave de fecha
-    for clave, valor in especificaciones.items():
-        clave_lower = clave.lower()
-        if any(term in clave_lower for term in ["date first available", "model year", "fecha de disponibilidad", "año del modelo", "lanzamiento"]):
-            match_anio = re.search(r'\b(201[5-9]|202[0-6])\b', valor)
-            if match_anio:
-                anio_lanzamiento = match_anio.group(0)
+
+    # Revisa especificaciones recopiladas
+    for k, v in especificaciones.items():
+        if any(term in k.lower() for term in ["date first available", "model year", "fecha de disponibilidad", "año", "release"]):
+            match = re.search(r'\b(201[5-9]|202[0-6])\b', v)
+            if match:
+                anio_lanzamiento = match.group(0)
                 break
 
+    # Si aún no aparece, escanea el HTML completo o el título
     if anio_lanzamiento == "Desconocido":
-        match_general = re.search(r'(?:Date First Available|Fecha de primera disponibilidad)[^\d]+(201[5-9]|202[0-6])', response.text, re.IGNORECASE)
-        if match_general:
-            anio_lanzamiento = match_general.group(1)
+        match_html = re.search(r'(?:Date First Available|Fecha de primera disponibilidad)[^\d]+(201[5-9]|202[0-6])', html_text, re.IGNORECASE)
+        if match_html:
+            anio_lanzamiento = match_html.group(1)
         else:
-            match_titulo = re.search(r'\b(201[5-9]|202[0-6])\b', nombre)
-            if match_titulo:
-                anio_lanzamiento = match_titulo.group(0)
+            match_title = re.search(r'\b(201[5-9]|202[0-6])\b', nombre)
+            if match_title:
+                anio_lanzamiento = match_title.group(0)
 
     slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
+    cat_id = detectar_categoria_id(nombre, soup)
 
     return {
         "nombre": nombre[:100],
         "slug": slug,
         "precio": precio,
         "calificacion": calificacion,
-        "categoria_id": detectar_categoria_id(nombre, soup),
+        "categoria_id": cat_id,
         "imagen_url": imagen_url,
         "anio_lanzamiento": anio_lanzamiento,
         "especificaciones": especificaciones
@@ -211,8 +225,6 @@ async def obtener_sugerencias(q: str = "", categoria_id: int = 0):
         return []
     try:
         query = supabase.table('productos').select('nombre').ilike('nombre', f"%{texto}%")
-        
-        # Si el usuario seleccionó una categoría específica (diferente de 0), filtramos por ella
         if categoria_id > 0:
             query = query.eq('categoria_id', categoria_id)
             
@@ -226,30 +238,50 @@ async def obtener_sugerencias(q: str = "", categoria_id: int = 0):
 @app.post("/api/obtener-producto")
 async def obtener_producto(req: SolicitudProducto):
     entrada = req.url_amazon.strip()
+    cat_filtro = req.categoria_id
 
     try:
-        # 1. Buscar primero en Supabase
-        res = supabase.table('productos').select('*').ilike('nombre', f"%{entrada}%").limit(1).execute()
-        if res.data and len(res.data) > 0:
-            return res.data[0]
+        producto_datos = None
 
-        # 2. Si no está en Supabase y es una URL de Amazon, extraer
+        # 1. Si es URL de Amazon
         if "amazon." in entrada:
             producto_datos = extraer_de_amazon(entrada)
-            if not producto_datos:
-                raise HTTPException(status_code=400, detail="No se pudo extraer la información del enlace.")
-            supabase.table('productos').upsert(producto_datos, on_conflict='slug').execute()
-            return producto_datos
+        else:
+            # 2. Buscar en Supabase
+            q_supa = supabase.table('productos').select('*').ilike('nombre', f"%{entrada}%")
+            if cat_filtro > 0:
+                q_supa = q_supa.eq('categoria_id', cat_filtro)
+            res = q_supa.limit(1).execute()
 
-        # 3. Intentar búsqueda automática en Amazon
-        url_encontrada = buscar_url_en_amazon(entrada)
-        if url_encontrada:
-            producto_datos = extraer_de_amazon(url_encontrada)
-            if producto_datos:
+            if res.data and len(res.data) > 0:
+                producto_datos = res.data[0]
+            else:
+                # 3. Buscar automáticamente en Amazon
+                url_encontrada = buscar_url_en_amazon(entrada)
+                if url_encontrada:
+                    producto_datos = extraer_de_amazon(url_encontrada)
+
+        if not producto_datos:
+            raise HTTPException(status_code=404, detail=f"No se encontró información para '{entrada}'.")
+
+        # --- VALIDACIÓN STRICTA DE CATEGORÍA ---
+        if cat_filtro > 0 and producto_datos.get("categoria_id") != cat_filtro:
+            nombre_cat_esperada = NOMBRES_CATEGORIAS.get(cat_filtro, "seleccionada")
+            nombre_cat_detectada = NOMBRES_CATEGORIAS.get(producto_datos.get("categoria_id"), "otra categoría")
+            raise HTTPException(
+                status_code=400,
+                detail=f"El producto '{producto_datos.get('nombre')}' pertenece a '{nombre_cat_detectada}', pero seleccionaste el filtro '{nombre_cat_esperada}'."
+            )
+
+        # Guardar / Actualizar en Supabase si es extracción nueva
+        if "slug" in producto_datos:
+            try:
                 supabase.table('productos').upsert(producto_datos, on_conflict='slug').execute()
-                return producto_datos
+            except Exception:
+                pass
 
-        raise HTTPException(status_code=404, detail=f"No se encontró información para '{entrada}'.")
+        return producto_datos
+
     except HTTPException as http_exc:
         raise http_exc
     except Exception as e:
