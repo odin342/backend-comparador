@@ -12,9 +12,9 @@ from supabase import create_client, Client
 # ==========================================
 # 1. CONFIGURACIÓN Y CREDENCIALES
 # ==========================================
-SCRAPERAPI_KEY = "ffed8880e2e45f1789bd6e0379c65b0b"
-SUPABASE_URL = "https://jqvodxitphzyuizfhkyj.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impxdm9keGl0cGh6eXVpemZoa3lqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4ODQzOTM4MCwiZXhwIjoyMTA0MDE1MzgwfQ.zV-wfwvVP-6mHONEs7K1tW6c8CbZG6jW-nvy5HZPpjM"
+SCRAPERAPI_KEY = "TU_SCRAPERAPI_KEY_REAL"
+SUPABASE_URL = "https://TU-PROYECTO-REAL.supabase.co"
+SUPABASE_KEY = "TU_SERVICE_ROLE_KEY_REAL"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -41,6 +41,8 @@ async def global_exception_handler(request: Request, exc: Exception):
 class SolicitudProducto(BaseModel):
     url_amazon: str
     categoria_id: int = 0
+    tienda: str = "auto"  # 'auto', 'mercadolibre', 'amazon'
+    pais_ml: str = "MCO"  # 'MCO' (Colombia), 'MLM' (México), 'MLA' (Argentina), etc.
 
 NOMBRES_CATEGORIAS = {
     1: "Celulares", 2: "Mouses", 3: "Teclados", 4: "Televisores",
@@ -49,7 +51,61 @@ NOMBRES_CATEGORIAS = {
 }
 
 # ==========================================
-# 3. FUNCIONES DE BÚSQUEDA Y EXTRACCIÓN
+# 3. EXTRACCIÓN MERCADOLIBRE (API OFICIAL)
+# ==========================================
+
+def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
+    url_api = f"https://api.mercadolibre.com/sites/{site_id}/search?q={quote_plus(busqueda)}&limit=1"
+    try:
+        response = requests.get(url_api, timeout=10)
+        if response.status_code == 200:
+            data = response.json()
+            results = data.get("results", [])
+            if results:
+                item = results[0]
+                
+                # Imagen de alta calidad
+                imagen_url = item.get("thumbnail", "").replace("-I.jpg", "-O.jpg")
+                
+                # Especificaciones desde atributos
+                especificaciones = {}
+                for attr in item.get("attributes", []):
+                    nombre_attr = attr.get("name")
+                    val_attr = attr.get("value_name")
+                    if nombre_attr and val_attr and len(nombre_attr) < 50:
+                        especificaciones[nombre_attr] = val_attr
+
+                nombre = item.get("title", "Producto MercadoLibre")
+                precio = float(item.get("price", 0.0))
+                
+                # Convertir precio COP a USD base si la consulta es en Colombia
+                precio_usd = precio
+                if site_id == "MCO":
+                    precio_usd = round(precio / 4000.0, 2)
+                elif site_id == "MLM":
+                    precio_usd = round(precio / 18.0, 2)
+
+                slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
+
+                return {
+                    "nombre": nombre[:100],
+                    "slug": f"ml-{slug}",
+                    "precio": precio_usd,
+                    "precio_local": precio,
+                    "moneda_local": item.get("currency_id", "COP"),
+                    "calificacion": "⭐ 4.5 / 5",
+                    "categoria_id": detectar_categoria_id(nombre),
+                    "imagen_url": imagen_url,
+                    "especificaciones": especificaciones,
+                    "tienda": "MercadoLibre",
+                    "url_compra": item.get("permalink", "")
+                }
+    except Exception:
+        pass
+    return None
+
+# ==========================================
+# 4. EXTRACCIÓN AMAZON
 # ==========================================
 
 def buscar_url_en_amazon(busqueda: str):
@@ -150,31 +206,22 @@ def extraer_de_amazon(url_amazon: str):
             if k and v and len(k) < 60:
                 especificaciones[k] = v
 
-    for li in soup.select("#detailBullets_feature_div li, #productDetails_db_sections li"):
-        spans = li.find_all("span", class_="a-list-item")
-        if spans:
-            texto = spans[0].get_text()
-            if ":" in texto:
-                partes = texto.split(":", 1)
-                k = re.sub(r'\s+', ' ', partes[0]).strip().replace('\u200e', '')
-                v = re.sub(r'\s+', ' ', partes[1]).strip().replace('\u200e', '')
-                if k and v and len(k) < 60:
-                    especificaciones[k] = v
-
     slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
 
     return {
         "nombre": nombre[:100],
-        "slug": slug,
+        "slug": f"az-{slug}",
         "precio": precio,
         "calificacion": calificacion,
         "categoria_id": detectar_categoria_id(nombre),
         "imagen_url": imagen_url,
-        "especificaciones": especificaciones
+        "especificaciones": especificaciones,
+        "tienda": "Amazon",
+        "url_compra": url_amazon
     }
 
 # ==========================================
-# 4. RUTAS API
+# 5. RUTAS API
 # ==========================================
 
 @app.get("/api/sugerencias")
@@ -198,21 +245,36 @@ async def obtener_sugerencias(q: str = "", categoria_id: int = 0):
 async def obtener_producto(req: SolicitudProducto):
     entrada = req.url_amazon.strip()
     cat_filtro = req.categoria_id
+    tienda_pref = req.tienda.lower()
+    pais_ml = req.pais_ml.upper()
 
     try:
         producto_datos = None
 
+        # 1. Si es enlace directo de Amazon
         if "amazon." in entrada:
             producto_datos = extraer_de_amazon(entrada)
-        else:
-            q_supa = supabase.table('productos').select('*').ilike('nombre', f"%{entrada}%")
-            if cat_filtro > 0:
-                q_supa = q_supa.eq('categoria_id', cat_filtro)
-            res = q_supa.limit(1).execute()
 
-            if res.data and len(res.data) > 0:
-                producto_datos = res.data[0]
-            else:
+        # 2. Si se prefiere MercadoLibre
+        elif tienda_pref == "mercadolibre":
+            producto_datos = extraer_de_mercadolibre(entrada, site_id=pais_ml)
+
+        # 3. Si es Automático (Busca primero en MercadoLibre por velocidad, luego Supabase/Amazon)
+        else:
+            # A. Intentar MercadoLibre
+            producto_datos = extraer_de_mercadolibre(entrada, site_id=pais_ml)
+            
+            # B. Intentar en Supabase
+            if not producto_datos:
+                q_supa = supabase.table('productos').select('*').ilike('nombre', f"%{entrada}%")
+                if cat_filtro > 0:
+                    q_supa = q_supa.eq('categoria_id', cat_filtro)
+                res = q_supa.limit(1).execute()
+                if res.data and len(res.data) > 0:
+                    producto_datos = res.data[0]
+
+            # C. Intentar Amazon si los anteriores no trajeron nada
+            if not producto_datos:
                 url_encontrada = buscar_url_en_amazon(entrada)
                 if url_encontrada:
                     producto_datos = extraer_de_amazon(url_encontrada)
@@ -220,6 +282,7 @@ async def obtener_producto(req: SolicitudProducto):
         if not producto_datos:
             raise HTTPException(status_code=404, detail=f"No se encontró información para '{entrada}'.")
 
+        # Validación estricta de categoría
         if cat_filtro > 0 and producto_datos.get("categoria_id") != cat_filtro:
             nombre_cat_esperada = NOMBRES_CATEGORIAS.get(cat_filtro, "seleccionada")
             nombre_cat_detectada = NOMBRES_CATEGORIAS.get(producto_datos.get("categoria_id"), "otra categoría")
@@ -228,9 +291,20 @@ async def obtener_producto(req: SolicitudProducto):
                 detail=f"El producto pertenece a '{nombre_cat_detectada}', pero seleccionaste la categoría '{nombre_cat_esperada}'."
             )
 
+        # Guardar en Supabase
         if "slug" in producto_datos:
             try:
-                supabase.table('productos').upsert(producto_datos, on_conflict='slug').execute()
+                # Filtrar solo campos válidos
+                datos_guardar = {
+                    "nombre": producto_datos.get("nombre"),
+                    "slug": producto_datos.get("slug"),
+                    "precio": producto_datos.get("precio"),
+                    "calificacion": producto_datos.get("calificacion"),
+                    "categoria_id": producto_datos.get("categoria_id"),
+                    "imagen_url": producto_datos.get("imagen_url"),
+                    "especificaciones": producto_datos.get("especificaciones")
+                }
+                supabase.table('productos').upsert(datos_guardar, on_conflict='slug').execute()
             except Exception:
                 pass
 
