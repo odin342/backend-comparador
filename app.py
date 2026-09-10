@@ -56,8 +56,14 @@ NOMBRES_CATEGORIAS = {
 
 def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
     url_api = f"https://api.mercadolibre.com/sites/{site_id}/search?q={quote_plus(busqueda)}&limit=1"
+    
+    # AGREGAR USER-AGENT PARA EVITAR BLOQUEO DE MERCADOLIBRE EN RENDER
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+
     try:
-        response = requests.get(url_api, timeout=10)
+        response = requests.get(url_api, headers=headers, timeout=10)
         if response.status_code == 200:
             data = response.json()
             results = data.get("results", [])
@@ -78,7 +84,7 @@ def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
                 nombre = item.get("title", "Producto MercadoLibre")
                 precio = float(item.get("price", 0.0))
                 
-                # Convertir precio COP a USD base si la consulta es en Colombia
+                # Conversión de moneda local a USD base
                 precio_usd = precio
                 if site_id == "MCO":
                     precio_usd = round(precio / 4000.0, 2)
@@ -93,7 +99,7 @@ def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
                     "precio": precio_usd,
                     "precio_local": precio,
                     "moneda_local": item.get("currency_id", "COP"),
-                    "calificacion": "⭐ 4.5 / 5",
+                    "calificacion": "⭐ 4.7 / 5",
                     "categoria_id": detectar_categoria_id(nombre),
                     "imagen_url": imagen_url,
                     "especificaciones": especificaciones,
@@ -132,11 +138,11 @@ def buscar_url_en_amazon(busqueda: str):
 
 def detectar_categoria_id(nombre_producto: str) -> int:
     nombre_lower = nombre_producto.lower()
-    if any(p in nombre_lower for p in ["phone", "celular", "smartphone", "iphone", "galaxy", "xiaomi"]):
+    if any(p in nombre_lower for p in ["phone", "celular", "smartphone", "iphone", "galaxy", "xiaomi", "redmi"]):
         return 1
     elif any(p in nombre_lower for p in ["mouse", "ratón", "trackball"]):
         return 2
-    elif any(p in nombre_lower for p in ["keyboard", "teclado", "keypad", "g213", "g515"]):
+    elif any(p in nombre_lower for p in ["keyboard", "teclado", "keypad", "g213", "g515", "k556", "redragon"]):
         return 3
     elif any(p in nombre_lower for p in ["tv", "television", "televisor", "smart tv"]):
         return 4
@@ -156,7 +162,7 @@ def detectar_categoria_id(nombre_producto: str) -> int:
         return 11
     elif any(p in nombre_lower for p in ["ipad", "tab", "tablet"]):
         return 12
-    return 1
+    return 3  # Por defecto si no coincide, retoma la categoría actual
 
 def extraer_de_amazon(url_amazon: str):
     payload = {
