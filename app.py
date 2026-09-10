@@ -12,9 +12,9 @@ from supabase import create_client, Client
 # ==========================================
 # 1. CONFIGURACIÓN Y CREDENCIALES
 # ==========================================
-SCRAPERAPI_KEY = "TU_SCRAPERAPI_KEY_REAL"
-SUPABASE_URL = "https://TU-PROYECTO-REAL.supabase.co"
-SUPABASE_KEY = "TU_SERVICE_ROLE_KEY_REAL"
+RAPI_KEY = "ffed8880e2e45f1789bd6e0379c65b0b"
+SUPABASE_URL = "https://jqvodxitphzyuizfhkyj.supabase.co"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Impxdm9keGl0cGh6eXVpemZoa3lqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4ODQzOTM4MCwiZXhwIjoyMTA0MDE1MzgwfQ.zV-wfwvVP-6mHONEs7K1tW6c8CbZG6jW-nvy5HZPpjM"
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
