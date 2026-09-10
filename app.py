@@ -55,64 +55,79 @@ NOMBRES_CATEGORIAS = {
 # ==========================================
 
 def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
-    # Normalizar texto de búsqueda
-    query_limpia = quote_plus(busqueda.strip())
-    url_api = f"https://api.mercadolibre.com/sites/{site_id}/search?q={query_limpia}&limit=5"
-    
-    # Headers completos para evitar bloqueo o respuesta vacía de MercadoLibre
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept": "application/json"
+    # MCO = Colombia (.com.co), MLM = México (.com.mx), MLA = Argentina (.com.ar)
+    dominios = {
+        "MCO": "https://listado.mercadolibre.com.co/",
+        "MLM": "https://listado.mercadolibre.com.mx/",
+        "MLA": "https://listado.mercadolibre.com.ar/",
+        "MLC": "https://listado.mercadolibre.cl/"
+    }
+    base_url = dominios.get(site_id, dominios["MCO"])
+    url_busqueda = f"{base_url}{quote_plus(busqueda)}"
+
+    payload = {
+        'api_key': SCRAPERAPI_KEY,
+        'url': url_busqueda,
+        'country_code': 'us'
     }
 
     try:
-        response = requests.get(url_api, headers=headers, timeout=12)
-        if response.status_code == 200:
-            data = response.json()
-            results = data.get("results", [])
-            
-            if results:
-                # Tomar el primer resultado de la búsqueda
-                item = results[0]
-                
-                # Imagen de mejor resolución
-                imagen_url = item.get("thumbnail", "").replace("-I.jpg", "-O.jpg")
-                if not imagen_url.startswith("http"):
-                    imagen_url = item.get("thumbnail", "")
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=25)
+        if response.status_code != 200:
+            return None
 
-                # Especificaciones desde atributos del producto
-                especificaciones = {}
-                for attr in item.get("attributes", []):
-                    nombre_attr = attr.get("name")
-                    val_attr = attr.get("value_name")
-                    if nombre_attr and val_attr and len(nombre_attr) < 50:
-                        especificaciones[nombre_attr] = val_attr
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Buscar el primer resultado del listado
+        item = soup.find('li', class_='ui-search-layout__item') or soup.find('div', class_='ui-search-result__wrapper')
+        if not item:
+            return None
 
-                nombre = item.get("title", "Producto MercadoLibre")
-                precio_local = float(item.get("price", 0.0))
-                
-                # Conversión a USD aproximado para homologar con Amazon
-                divisores = {"MCO": 4000.0, "MLM": 18.0, "MLA": 900.0, "MLC": 950.0}
-                factor = divisores.get(site_id, 4000.0)
-                precio_usd = round(precio_local / factor, 2)
+        # Título
+        titulo_elem = item.find('h2') or item.find('a', class_='poly-component__title') or item.find('h3')
+        nombre = titulo_elem.get_text().strip() if titulo_elem else busqueda.title()
 
-                slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
+        # Enlace de compra
+        enlace_elem = item.find('a', href=True)
+        url_compra = enlace_elem['href'] if enlace_elem else url_busqueda
 
-                return {
-                    "nombre": nombre[:100],
-                    "slug": f"ml-{slug}",
-                    "precio": precio_usd,
-                    "precio_local": precio_local,
-                    "moneda_local": item.get("currency_id", "COP"),
-                    "calificacion": "⭐ 4.6 / 5",
-                    "categoria_id": detectar_categoria_id(nombre),
-                    "imagen_url": imagen_url,
-                    "especificaciones": especificaciones,
-                    "tienda": "MercadoLibre",
-                    "url_compra": item.get("permalink", "")
-                }
+        # Imagen
+        img_elem = item.find('img')
+        imagen_url = ""
+        if img_elem:
+            imagen_url = img_elem.get('data-src') or img_elem.get('src') or ""
+
+        # Precio local
+        precio_elem = item.find('span', class_='andes-money-amount__fraction')
+        precio_local = 0.0
+        if precio_elem:
+            precio_texto = precio_elem.get_text().replace('.', '').replace(',', '')
+            match = re.search(r'\d+', precio_texto)
+            if match:
+                precio_local = float(match.group())
+
+        # Convertir a USD para mantener estándar de la app
+        divisores = {"MCO": 4000.0, "MLM": 18.0, "MLA": 900.0, "MLC": 950.0}
+        factor = divisores.get(site_id, 4000.0)
+        precio_usd = round(precio_local / factor, 2) if precio_local > 0 else 0.0
+
+        slug = re.sub(r'[^a-z0-9]+', '-', nombre.lower()).strip('-')[:50]
+
+        return {
+            "nombre": nombre[:100],
+            "slug": f"ml-{slug}",
+            "precio": precio_usd,
+            "precio_local": precio_local,
+            "moneda_local": "COP" if site_id == "MCO" else "USD",
+            "calificacion": "⭐ 4.7 / 5",
+            "categoria_id": detectar_categoria_id(nombre),
+            "imagen_url": imagen_url,
+            "especificaciones": {"Tienda": "MercadoLibre", "Ubicación": "Envío Nacional"},
+            "tienda": "MercadoLibre",
+            "url_compra": url_compra
+        }
     except Exception as e:
-        print(f"Error MercadoLibre: {e}")
+        print(f"Error scraping MercadoLibre: {e}")
     return None
 
 # ==========================================
