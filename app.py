@@ -264,29 +264,18 @@ async def obtener_producto(req: SolicitudProducto):
     try:
         producto_datos = None
 
-        # 1. Si es enlace directo de Amazon
         if "amazon." in entrada:
             producto_datos = extraer_de_amazon(entrada)
-
-        # 2. Si se prefiere MercadoLibre
         elif tienda_pref == "mercadolibre":
             producto_datos = extraer_de_mercadolibre(entrada, site_id=pais_ml)
-
-        # 3. Si es Automático (Busca primero en MercadoLibre por velocidad, luego Supabase/Amazon)
-        else:
-            # A. Intentar MercadoLibre
-            producto_datos = extraer_de_mercadolibre(entrada, site_id=pais_ml)
-            
-            # B. Intentar en Supabase
+            # Fallback a Amazon si MercadoLibre no lo encuentra
             if not producto_datos:
-                q_supa = supabase.table('productos').select('*').ilike('nombre', f"%{entrada}%")
-                if cat_filtro > 0:
-                    q_supa = q_supa.eq('categoria_id', cat_filtro)
-                res = q_supa.limit(1).execute()
-                if res.data and len(res.data) > 0:
-                    producto_datos = res.data[0]
-
-            # C. Intentar Amazon si los anteriores no trajeron nada
+                url_encontrada = buscar_url_en_amazon(entrada)
+                if url_encontrada:
+                    producto_datos = extraer_de_amazon(url_encontrada)
+        else:
+            # Automático
+            producto_datos = extraer_de_mercadolibre(entrada, site_id=pais_ml)
             if not producto_datos:
                 url_encontrada = buscar_url_en_amazon(entrada)
                 if url_encontrada:
@@ -295,19 +284,9 @@ async def obtener_producto(req: SolicitudProducto):
         if not producto_datos:
             raise HTTPException(status_code=404, detail=f"No se encontró información para '{entrada}'.")
 
-        # Validación estricta de categoría
-        if cat_filtro > 0 and producto_datos.get("categoria_id") != cat_filtro:
-            nombre_cat_esperada = NOMBRES_CATEGORIAS.get(cat_filtro, "seleccionada")
-            nombre_cat_detectada = NOMBRES_CATEGORIAS.get(producto_datos.get("categoria_id"), "otra categoría")
-            raise HTTPException(
-                status_code=400,
-                detail=f"El producto pertenece a '{nombre_cat_detectada}', pero seleccionaste la categoría '{nombre_cat_esperada}'."
-            )
-
         # Guardar en Supabase
         if "slug" in producto_datos:
             try:
-                # Filtrar solo campos válidos
                 datos_guardar = {
                     "nombre": producto_datos.get("nombre"),
                     "slug": producto_datos.get("slug"),
