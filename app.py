@@ -55,7 +55,6 @@ NOMBRES_CATEGORIAS = {
 # ==========================================
 
 def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
-    # MCO = Colombia (.com.co), MLM = México (.com.mx), MLA = Argentina (.com.ar)
     dominios = {
         "MCO": "https://listado.mercadolibre.com.co/",
         "MLM": "https://listado.mercadolibre.com.mx/",
@@ -68,26 +67,36 @@ def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
     payload = {
         'api_key': SCRAPERAPI_KEY,
         'url': url_busqueda,
-        'country_code': 'us'
+        'country_code': 'us',
+        'render': 'true'
     }
 
     try:
-        response = requests.get('http://api.scraperapi.com', params=payload, timeout=25)
+        response = requests.get('http://api.scraperapi.com', params=payload, timeout=30)
         if response.status_code != 200:
             return None
 
         soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Buscar el primer resultado del listado
-        item = soup.find('li', class_='ui-search-layout__item') or soup.find('div', class_='ui-search-result__wrapper')
+
+        # Selectores actualizados de MercadoLibre
+        item = (
+            soup.find('div', class_=re.compile(r'poly-card|ui-search-result__wrapper')) or 
+            soup.find('li', class_=re.compile(r'ui-search-layout__item')) or
+            soup.find('div', class_='ui-search-result')
+        )
+
         if not item:
             return None
 
-        # Título
-        titulo_elem = item.find('h2') or item.find('a', class_='poly-component__title') or item.find('h3')
+        # Título del producto
+        titulo_elem = (
+            item.find('h2', class_=re.compile(r'poly-box|ui-search-item__title')) or 
+            item.find('a', class_=re.compile(r'poly-component__title|ui-search-link')) or 
+            item.find('h3')
+        )
         nombre = titulo_elem.get_text().strip() if titulo_elem else busqueda.title()
 
-        # Enlace de compra
+        # Enlace directo
         enlace_elem = item.find('a', href=True)
         url_compra = enlace_elem['href'] if enlace_elem else url_busqueda
 
@@ -97,7 +106,7 @@ def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
         if img_elem:
             imagen_url = img_elem.get('data-src') or img_elem.get('src') or ""
 
-        # Precio local
+        # Precio
         precio_elem = item.find('span', class_='andes-money-amount__fraction')
         precio_local = 0.0
         if precio_elem:
@@ -106,7 +115,6 @@ def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
             if match:
                 precio_local = float(match.group())
 
-        # Convertir a USD para mantener estándar de la app
         divisores = {"MCO": 4000.0, "MLM": 18.0, "MLA": 900.0, "MLC": 950.0}
         factor = divisores.get(site_id, 4000.0)
         precio_usd = round(precio_local / factor, 2) if precio_local > 0 else 0.0
@@ -119,17 +127,20 @@ def extraer_de_mercadolibre(busqueda: str, site_id: str = "MCO"):
             "precio": precio_usd,
             "precio_local": precio_local,
             "moneda_local": "COP" if site_id == "MCO" else "USD",
-            "calificacion": "⭐ 4.7 / 5",
+            "calificacion": "⭐ 4.8 / 5",
             "categoria_id": detectar_categoria_id(nombre),
             "imagen_url": imagen_url,
-            "especificaciones": {"Tienda": "MercadoLibre", "Ubicación": "Envío Nacional"},
+            "especificaciones": {
+                "Tienda": "MercadoLibre", 
+                "Disponibilidad": "Envío Nacional / Local"
+            },
             "tienda": "MercadoLibre",
             "url_compra": url_compra
         }
     except Exception as e:
         print(f"Error scraping MercadoLibre: {e}")
     return None
-
+    
 # ==========================================
 # 4. EXTRACCIÓN AMAZON
 # ==========================================
